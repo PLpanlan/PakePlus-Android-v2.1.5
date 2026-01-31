@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -22,17 +23,6 @@ import android.webkit.WebViewClient
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-// import android.view.Menu
-// import android.view.WindowInsets
-// import com.google.android.material.snackbar.Snackbar
-// import com.google.android.material.navigation.NavigationView
-// import androidx.navigation.findNavController
-// import androidx.navigation.ui.AppBarConfiguration
-// import androidx.navigation.ui.navigateUp
-// import androidx.navigation.ui.setupActionBarWithNavController
-// import androidx.navigation.ui.setupWithNavController
-// import androidx.drawerlayout.widget.DrawerLayout
-// import com.app.pakeplus.databinding.ActivityMainBinding
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.GestureDetectorCompat
 import androidx.core.view.ViewCompat
@@ -41,16 +31,19 @@ import androidx.core.net.toUri
 import org.json.JSONObject
 import java.net.URISyntaxException
 import kotlin.math.abs
+import android.widget.FrameLayout
 
 class MainActivity : AppCompatActivity() {
-
-//    private lateinit var appBarConfiguration: AppBarConfiguration
-//    private lateinit var binding: ActivityMainBinding
 
     private lateinit var webView: WebView
     private lateinit var gestureDetector: GestureDetectorCompat
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
+
+    // === 新增：用于支持视频全屏 ===
+    private var customView: View? = null
+    private var customViewCallback: WebChromeClient.CustomViewCallback? = null
+    private var originalOrientation: Int = 0  // 保存进入全屏前的屏幕方向
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -144,7 +137,6 @@ class MainActivity : AppCompatActivity() {
             mediaPlaybackRequiresUserGesture = false
             // setSupportMultipleWindows(true)
         }
-        webView
         // set user agent
         if (userAgent.isNotEmpty()) {
             webView.settings.userAgentString = userAgent
@@ -159,7 +151,7 @@ class MainActivity : AppCompatActivity() {
         // inject js
         webView.webViewClient = MyWebViewClient(debug)
 
-        // get web load progress
+        // get web load progress & fullscreen support
         webView.webChromeClient = MyChromeClient(this)
 
         // Setup gesture detector
@@ -206,33 +198,7 @@ class MainActivity : AppCompatActivity() {
 
         // load webUrl or file:///android_asset/index.html
         webView.loadUrl(webUrl)
-
-//        binding = ActivityMainBinding.inflate(layoutInflater)
-//        setContentView(R.layout.single_main)
-
-//        setSupportActionBar(binding.appBarMain.toolbar)
-
-//        binding.appBarMain.fab.setOnClickListener { view ->
-//            Snackbar.make(view, "Replace with your own action", Snackbar.LENGTH_LONG)
-//                .setAction("Action", null)
-//                .setAnchorView(R.id.fab).show()
-//        }
-
-//        val drawerLayout: DrawerLayout = binding.drawerLayout
-//        val navView: NavigationView = binding.navView
-//        val navController = findNavController(R.id.nav_host_fragment_content_main)
-
-        // Passing each menu ID as a set of Ids because each
-        // menu should be considered as top level destinations.
-//        appBarConfiguration = AppBarConfiguration(
-//            setOf(
-//                R.id.nav_home, R.id.nav_gallery, R.id.nav_slideshow
-//            ), drawerLayout
-//        )
-//        setupActionBarWithNavController(navController, appBarConfiguration)
-//        navView.setupWithNavController(navController)
     }
-
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
@@ -266,17 +232,6 @@ class MainActivity : AppCompatActivity() {
             null
         }
     }
-
-//    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-//        // Inflate the menu; this adds items to the action bar if it is present.
-//        menuInflater.inflate(R.menu.main, menu)
-//        return true
-//    }
-
-//    override fun onSupportNavigateUp(): Boolean {
-//        val navController = findNavController(R.id.nav_host_fragment_content_main)
-//        return navController.navigateUp(appBarConfiguration) || super.onSupportNavigateUp()
-//    }
 
     inner class MyWebViewClient(val debug: Boolean) : WebViewClient() {
 
@@ -375,14 +330,71 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-            super.onShowCustomView(view, callback)
+            // 如果已经有自定义视图，直接返回（防止重复调用）
+            if (activity.customView != null) {
+                callback?.onCustomViewHidden()
+                return
+            }
+
+            // 保存原始屏幕方向（用于退出全屏时恢复）
+            activity.originalOrientation = activity.requestedOrientation
+
+            // 强制横屏（推荐：视频全屏通常横屏；如果想支持竖屏全屏，可注释掉这行）
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
+            // 保存视图和回调
+            activity.customView = view
+            activity.customViewCallback = callback
+
+            // 获取 Activity 的根布局 (DecorView)
+            val decorView = activity.window.decorView as FrameLayout
+
+            // 添加全屏视频视图到根布局
+            val layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            decorView.addView(view, layoutParams)
+
+            // 隐藏原有 WebView，防止重叠
+            activity.webView.visibility = View.GONE
+
+            // 进入沉浸式模式（隐藏状态栏、导航栏）
+            activity.window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                            or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                            or View.SYSTEM_UI_FLAG_FULLSCREEN
+                            or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    )
         }
 
         override fun onHideCustomView() {
-            super.onHideCustomView()
+            if (activity.customView == null) return
+
+            // 恢复屏幕方向
+            activity.requestedOrientation = activity.originalOrientation
+
+            // 移除自定义全屏视图
+            val decorView = activity.window.decorView as FrameLayout
+            decorView.removeView(activity.customView)
+
+            // 恢复 WebView 可见
+            activity.webView.visibility = View.VISIBLE
+
+            // 恢复系统 UI（显示状态栏、导航栏）
+            activity.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
+
+            // 通知 WebView 全屏已退出
+            activity.customViewCallback?.onCustomViewHidden()
+
+            // 清空引用，防止内存泄漏
+            activity.customView = null
+            activity.customViewCallback = null
         }
 
-        // 处理文件选择（Android 5.0+）
+        // 处理文件选择（Android 5.0+） - 原有代码保持不变
         override fun onShowFileChooser(
             webView: WebView?,
             filePathCallback: ValueCallback<Array<Uri>>?,
