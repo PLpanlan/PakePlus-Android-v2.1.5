@@ -44,6 +44,7 @@ class MainActivity : AppCompatActivity() {
     private var customView: View? = null
     private var customViewCallback: WebChromeClient.CustomViewCallback? = null
     private var originalOrientation: Int = 0  // 保存进入全屏前的屏幕方向
+    private var fullscreenContainer: FrameLayout? = null
 
     @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -330,36 +331,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
-            // 如果已经有自定义视图，直接返回（防止重复调用）
             if (activity.customView != null) {
                 callback?.onCustomViewHidden()
                 return
             }
-
-            // 保存原始屏幕方向（用于退出全屏时恢复）
+        
             activity.originalOrientation = activity.requestedOrientation
-
-            // 强制横屏（推荐：视频全屏通常横屏；如果想支持竖屏全屏，可注释掉这行）
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-
-            // 保存视图和回调
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE  // 可注释掉测试竖屏全屏
+        
             activity.customView = view
             activity.customViewCallback = callback
-
-            // 获取 Activity 的根布局 (DecorView)
+        
+            // 创建一个全屏容器（关键：解决白屏/黑屏）
+            activity.fullscreenContainer = FrameLayout(activity).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)  // 黑色背景防白屏
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            }
+        
+            // 把视频 view 加到容器里
+            activity.fullscreenContainer?.addView(view)
+        
+            // 加容器到 decorView
             val decorView = activity.window.decorView as FrameLayout
-
-            // 添加全屏视频视图到根布局
-            val layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-            decorView.addView(view, layoutParams)
-
-            // 隐藏原有 WebView，防止重叠
+            decorView.addView(activity.fullscreenContainer)
+        
+            // 隐藏 WebView
             activity.webView.visibility = View.GONE
-
-            // 进入沉浸式模式（隐藏状态栏、导航栏）
+        
+            // 沉浸式
             activity.window.decorView.systemUiVisibility = (
                     View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                             or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
@@ -372,26 +374,22 @@ class MainActivity : AppCompatActivity() {
 
         override fun onHideCustomView() {
             if (activity.customView == null) return
-
-            // 恢复屏幕方向
+        
             activity.requestedOrientation = activity.originalOrientation
-
-            // 移除自定义全屏视图
+        
             val decorView = activity.window.decorView as FrameLayout
-            decorView.removeView(activity.customView)
-
-            // 恢复 WebView 可见
+            // 移除容器而不是单个 view
+            activity.fullscreenContainer?.let { decorView.removeView(it) }
+        
             activity.webView.visibility = View.VISIBLE
-
-            // 恢复系统 UI（显示状态栏、导航栏）
+        
             activity.window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_VISIBLE
-
-            // 通知 WebView 全屏已退出
+        
             activity.customViewCallback?.onCustomViewHidden()
-
-            // 清空引用，防止内存泄漏
+        
             activity.customView = null
             activity.customViewCallback = null
+            activity.fullscreenContainer = null  // 清空
         }
 
         // 处理文件选择（Android 5.0+） - 原有代码保持不变
